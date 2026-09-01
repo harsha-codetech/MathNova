@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import api from '../api.js'
+import FlagList from './Flags.jsx'
 import { RecordCard } from './VaultPanel.jsx'
 import { Badge, Banner, Empty, Field, Panel, formatWhen, statusTone } from './ui.jsx'
 
@@ -16,6 +17,9 @@ export default function RequesterPortal({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // Fraud heuristics also run on the consent side, so a requester sees when
+  // their own request pattern has been flagged to the patient.
+  const [submitFlags, setSubmitFlags] = useState([])
 
   // Fetched payloads keyed by grant id, plus per-grant errors when the consent
   // engine refuses (revoked / expired / out of scope).
@@ -43,6 +47,7 @@ export default function RequesterPortal({
       setNotice(
         `Request #${created.access_request.id} submitted. Nothing is readable until the patient signs.`,
       )
+      setSubmitFlags(created.fraud_flags || [])
       setPurpose('')
       await onRefresh()
     } catch (e2) {
@@ -114,6 +119,16 @@ export default function RequesterPortal({
 
             {error && <Banner tone="error">{error}</Banner>}
             {notice && <Banner tone="ok">{notice}</Banner>}
+            {submitFlags.length > 0 && (
+              <div>
+                <Banner tone="error">
+                  This request tripped {submitFlags.length} fraud heuristic
+                  {submitFlags.length > 1 ? 's' : ''} and the patient will see the
+                  explanation alongside it.
+                </Banner>
+                <FlagList fraud={submitFlags} />
+              </div>
+            )}
 
             <div>
               <button

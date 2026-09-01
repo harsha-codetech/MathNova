@@ -35,6 +35,7 @@ export default function App() {
   const [grants, setGrants] = useState([])
   const [auditLog, setAuditLog] = useState(null)
   const [delegates, setDelegates] = useState([])
+  const [flags, setFlags] = useState(null)
   const [requesterRequests, setRequesterRequests] = useState([])
 
   const [error, setError] = useState('')
@@ -71,18 +72,20 @@ export default function App() {
   const refreshPatient = useCallback(async () => {
     if (!patientId) return
     try {
-      const [v, rs, gs, ds, log] = await Promise.all([
+      const [v, rs, gs, ds, log, fl] = await Promise.all([
         api.vault(patientId),
         api.listRequests({ patient_id: patientId }),
         api.listGrants(patientId),
         api.listDelegates(patientId),
         api.auditLog(patientId),
+        api.flags(patientId),
       ])
       setVault(v)
       setRequests(rs)
       setGrants(gs)
       setDelegates(ds)
       setAuditLog(log)
+      setFlags(fl)
       setError('')
     } catch (e) {
       setError(e.message)
@@ -196,6 +199,7 @@ export default function App() {
               requests={requests}
               grants={grants}
               delegates={delegates}
+              flags={flags}
               onRefresh={refreshAll}
             />
           ) : (

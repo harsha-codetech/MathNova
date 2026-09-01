@@ -2,7 +2,8 @@
 
 from flask import Blueprint, jsonify, request
 
-from models import MedicalRecord, Patient, db
+from ai.pipeline import analyse_new_record
+from models import FraudFlag, MedicalRecord, Patient, SafetyFlag, db
 
 bp = Blueprint("patients", __name__, url_prefix="/api")
 
@@ -64,8 +65,9 @@ def add_record(patient_id):
     """Add a medical record. Used by the seed script and by the demo's
     "new prescription arrives" button.
 
-    From phase 5 onward this also triggers the Claude safety check and the
-    rule-based fraud heuristics; that wiring lives in routes/insights.py.
+    A new prescription also runs the two AI analysers before responding, so the
+    caller gets the safety and fraud verdicts in the same round trip that
+    created the record.
     """
     patient = db.session.get(Patient, patient_id)
     if patient is None:
@@ -82,6 +84,35 @@ def add_record(patient_id):
 
     record = MedicalRecord(patient_id=patient_id, record_type=record_type, payload=payload)
     db.session.add(record)
+    db.session.flush()
+
+    analysis = analyse_new_record(record)
     db.session.commit()
 
-    return jsonify({"record": record.to_dict()}), 201
+    return jsonify({"record": record.to_dict(), **analysis}), 201
+
+
+@bp.get("/patients/<int:patient_id>/flags")
+def get_flags(patient_id):
+    """Everything the AI layer has flagged for this patient. Surfaced in the UI
+    as coloured badges with the full explanation -- never logged silently."""
+    if db.session.get(Patient, patient_id) is None:
+        return jsonify({"error": "patient not found"}), 404
+
+    safety_flags = (
+        SafetyFlag.query.filter_by(patient_id=patient_id)
+        .order_by(SafetyFlag.id.desc())
+        .all()
+    )
+    fraud_flags = (
+        FraudFlag.query.filter_by(patient_id=patient_id)
+        .order_by(FraudFlag.id.desc())
+        .all()
+    )
+    return jsonify(
+        {
+            "patient_id": patient_id,
+            "safety_flags": [f.to_dict() for f in safety_flags],
+            "fraud_flags": [f.to_dict() for f in fraud_flags],
+        }
+    )

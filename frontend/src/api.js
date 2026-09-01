@@ -60,6 +60,7 @@ export const api = {
   revokeDelegate: (id, payload) => post(`/delegates/${id}/revoke`, payload),
 
   auditLog: (patientId) => get(`/patients/${patientId}/audit-log`),
+  flags: (patientId) => get(`/patients/${patientId}/flags`),
 
   // Demo stand-in for a client-side wallet. See backend/routes/wallet.py.
   sign: (payload) => post('/wallet/sign', payload),

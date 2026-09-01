@@ -54,7 +54,7 @@ export function RecordCard({ record, extra }) {
   )
 }
 
-export default function VaultPanel({ vault, renderRecordExtra }) {
+export default function VaultPanel({ vault, renderRecordExtra, actions }) {
   if (!vault) return null
   const byType = vault.by_type || {}
   const order = ['allergy', 'prescription', 'diagnostic', 'report']
@@ -63,6 +63,7 @@ export default function VaultPanel({ vault, renderRecordExtra }) {
     <Panel
       title="Health Vault"
       sub={`${vault.records?.length || 0} records — owned by ${vault.patient?.name}`}
+      actions={actions}
     >
       <div className="stack">
         {order.map((type) => {

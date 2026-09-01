@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 import audit
+from ai.pipeline import analyse_access_request
 from access_control import (
     ACCESS_FIELDS,
     ConsentError,
@@ -99,9 +100,12 @@ def create_access_request():
             "purpose": purpose,
         },
     )
+
+    # Fraud heuristics run on the consent side too, not just on prescriptions.
+    analysis = analyse_access_request(access_request)
     db.session.commit()
 
-    return jsonify({"access_request": access_request.to_dict()}), 201
+    return jsonify({"access_request": access_request.to_dict(), **analysis}), 201
 
 
 @bp.get("/access-requests")

@@ -10,14 +10,16 @@ signing the canonical payload with the patient's (or delegate's) Ed25519 key
 and verifying it, and every step appends a real hash-chained audit entry. If
 the crypto were broken, seeding would fail.
 
-Later phases extend this file:
-  * phase 5/6 -- the prescriptions that trip the safety and fraud analysers
+The clinical scenarios at the bottom are run through the real AI pipeline, so
+the safety and fraud flags on screen at first load were produced the same way a
+live one would be.
 """
 
 from datetime import timedelta
 
 import audit
 from access_control import normalise_fields
+from ai.pipeline import analyse_new_record
 from app import create_app
 from crypto_utils import (
     canonical_json,
@@ -33,8 +35,10 @@ from models import (
     AccessGrant,
     AccessRequest,
     Delegate,
+    FraudFlag,
     MedicalRecord,
     Patient,
+    SafetyFlag,
     db,
     iso,
     utcnow,
@@ -448,6 +452,41 @@ def seed_consent(people):
     }
 
 
+# --------------------------------------------------------------------------
+# Clinical scenarios -- these run through the real analysers
+# --------------------------------------------------------------------------
+def seed_clinical_scenarios(people):
+    """Two prescriptions that SHOULD be flagged, plus the history that makes the
+    fraud rules fire. Each is passed through ai.pipeline exactly as the live API
+    would, so the flags on screen are genuine analyser output."""
+    rohit, meera = people["rohit"], people["meera"]
+
+    # ---- SAFETY: an NSAID prescribed on top of warfarin -------------------
+    # A real, well-documented major interaction (bleeding risk). Whoever wrote
+    # this script did not have sight of the anticoagulant.
+    naproxen = add_record(rohit, "prescription", prescription(
+        "Naproxen", "500 mg", "twice daily", "Dr. Sameer Joshi", "MCI-MH-55214",
+        days_ago=1, notes="Acute lower back pain after a fall.",
+        quantity=20, supply_days=10))
+    analyse_new_record(naproxen)
+
+    # ---- FRAUD: prescriber shopping on a controlled analgesic -------------
+    # Three different doctors write the same opioid inside 30 days, each refill
+    # arriving well before the previous supply could have run out, and the last
+    # one for double the usual quantity.
+    tramadol_history = [
+        ("Dr. Arjun Pillai", "MCI-TN-30877", 26, 30, 30),
+        ("Dr. Sanjay Rao", "MCI-TN-41288", 14, 30, 30),
+        ("Dr. Neha Bhatt", "MCI-KA-60931", 3, 60, 30),
+    ]
+    for prescriber_name, prescriber_id, days_ago, quantity, supply_days in tramadol_history:
+        record = add_record(meera, "prescription", prescription(
+            "Tramadol", "50 mg", "as needed for pain", prescriber_name, prescriber_id,
+            days_ago=days_ago, notes="Chronic lower back pain.",
+            quantity=quantity, supply_days=supply_days))
+        analyse_new_record(record)
+
+
 def run():
     app = create_app()
     with app.app_context():
@@ -455,6 +494,7 @@ def run():
         db.create_all()
         people = seed_people()
         db.session.flush()
+        seed_clinical_scenarios(people)
         seed_consent(people)
         db.session.commit()
 
@@ -474,6 +514,10 @@ def run():
             f"(revoked={AccessGrant.query.filter_by(status='revoked').count()}) "
             f"delegates={Delegate.query.count()}"
         )
+        for flag in SafetyFlag.query.all():
+            print(f"  SAFETY [{flag.severity:<6}] {flag.flag_type:<18} ({flag.source})")
+        for flag in FraudFlag.query.all():
+            print(f"  FRAUD  [{flag.severity:<6}] {flag.flag_type:<18} ({flag.source})")
 
 
 if __name__ == "__main__":

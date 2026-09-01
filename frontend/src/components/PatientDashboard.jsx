@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import api from '../api.js'
+import AddPrescriptionModal from './AddPrescriptionModal.jsx'
 import ApprovalModal from './ApprovalModal.jsx'
 import DelegatePanel from './DelegatePanel.jsx'
+import FlagList, { indexFlags } from './Flags.jsx'
 import RevokeGrantModal from './RevokeGrantModal.jsx'
 import VaultPanel from './VaultPanel.jsx'
 import { Badge, Banner, Empty, Panel, formatWhen, statusTone } from './ui.jsx'
 
-function RequestCard({ request, onApprove, onDeny, busy }) {
+function RequestCard({ request, onApprove, onDeny, busy, flags }) {
   return (
     <article className="card">
       <div className="spread">
@@ -30,6 +32,8 @@ function RequestCard({ request, onApprove, onDeny, busy }) {
           </span>
         ))}
       </div>
+
+      {flags && <FlagList safety={flags.safety} fraud={flags.fraud} />}
 
       <div className="spread" style={{ marginTop: 12 }}>
         <span className="small faint">{formatWhen(request.created_at)}</span>
@@ -94,12 +98,19 @@ export default function PatientDashboard({
   requests,
   grants,
   delegates,
+  flags,
   onRefresh,
 }) {
   const [approving, setApproving] = useState(null)
   const [revoking, setRevoking] = useState(null)
+  const [prescribing, setPrescribing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  const { byRecord, byRequest } = indexFlags(flags)
+  const allSafety = flags?.safety_flags || []
+  const allFraud = flags?.fraud_flags || []
+  const highCount = [...allSafety, ...allFraud].filter((f) => f.severity === 'high').length
 
   const pending = requests.filter((r) => r.status === 'pending')
   const settled = requests.filter((r) => r.status !== 'pending')
@@ -125,6 +136,23 @@ export default function PatientDashboard({
         {error && <Banner tone="error">{error}</Banner>}
 
         <Panel
+          title="Clinical & fraud alerts"
+          sub="Every new prescription is reviewed for interactions, allergy conflicts and diversion patterns"
+          actions={
+            <Badge tone={highCount ? 'danger' : allSafety.length + allFraud.length ? 'warn' : 'ok'}>
+              {allSafety.length + allFraud.length} open
+              {highCount ? ` · ${highCount} high` : ''}
+            </Badge>
+          }
+        >
+          {allSafety.length + allFraud.length === 0 ? (
+            <Empty>No safety or fraud concerns on this vault.</Empty>
+          ) : (
+            <FlagList safety={allSafety} fraud={allFraud} dedupe />
+          )}
+        </Panel>
+
+        <Panel
           title="Pending access requests"
           sub="Nothing is released until someone with authority signs"
           actions={<Badge tone={pending.length ? 'warn' : 'neutral'}>{pending.length} waiting</Badge>}
@@ -137,6 +165,7 @@ export default function PatientDashboard({
                 key={r.id}
                 request={r}
                 busy={busy}
+                flags={byRequest[r.id]}
                 onApprove={setApproving}
                 onDeny={deny}
               />
@@ -175,7 +204,15 @@ export default function PatientDashboard({
         )}
       </div>
 
-      <VaultPanel vault={vault} />
+      <VaultPanel
+        vault={vault}
+        actions={<button onClick={() => setPrescribing(true)}>+ New prescription</button>}
+        renderRecordExtra={(record) =>
+          byRecord[record.id] ? (
+            <FlagList safety={byRecord[record.id].safety} fraud={byRecord[record.id].fraud} />
+          ) : null
+        }
+      />
 
       {approving && (
         <ApprovalModal
@@ -187,6 +224,17 @@ export default function PatientDashboard({
             onRefresh()
           }}
           onApproved={onRefresh}
+        />
+      )}
+
+      {prescribing && (
+        <AddPrescriptionModal
+          patient={patient}
+          onClose={() => {
+            setPrescribing(false)
+            onRefresh()
+          }}
+          onAdded={onRefresh}
         />
       )}
 
