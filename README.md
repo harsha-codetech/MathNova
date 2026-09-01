@@ -91,17 +91,36 @@ configure.
 
 ### 3. Anthropic API key (for the AI layer)
 
-The safety and fraud analysers call Claude (`claude-sonnet-5`). Set the key **before**
-starting the backend:
+The safety and fraud analysers call Claude (`claude-sonnet-5`). Get a key from
+<https://console.anthropic.com/settings/keys>.
+
+**Recommended — a `.env` file.** It is read automatically by both `seed.py` and `app.py`,
+so you cannot forget to export it in a new terminal. `.env` is gitignored, so the key never
+reaches the repository.
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+cd backend && cp .env.example .env
 ```
+
+Then open `backend/.env` and replace the placeholder with your real key:
+
+```
+ANTHROPIC_API_KEY=sk-ant-your-real-key-here
+```
+
+**Alternative — an environment variable.** It must be set in the *same shell*, *before*
+you run either command, and it wins over the `.env` file.
 
 PowerShell:
 
 ```bash
 $env:ANTHROPIC_API_KEY = "sk-ant-..."
+```
+
+bash / zsh:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 Windows `cmd`:
@@ -110,17 +129,33 @@ Windows `cmd`:
 set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-**Without a key the app still runs end to end.** The analysers fall back to a small set of
-offline heuristics, flags are stored with `source: "fallback"`, and both the topbar chip
-and every flag card say `offline analyser` instead of `Claude`. That fallback exists purely
-so a demo cannot die on a missing key mid-presentation — it is not the intended path, and
-the UI never claims Claude wrote something it did not.
+**Order matters.** The key is read at process start, so set it *first*, then re-seed (so the
+demo flags are Claude-authored), then start the server:
 
-Check which mode you are in:
+```bash
+python seed.py
+```
+
+```bash
+python app.py
+```
+
+**Verify which mode you are in.** `"mode": "claude"` means a key was found;
+`"offline-fallback"` means none was:
 
 ```bash
 curl -s http://127.0.0.1:5000/api/health
 ```
+
+The UI says so too — a chip in the top-right reads `AI: claude-sonnet-5` or
+`AI: offline fallback`, and every flag card is labelled `Claude` or `offline analyser`.
+
+**Without a key the app still runs end to end.** The analysers fall back to a small set of
+offline heuristics and flags are stored with `source: "fallback"`. That fallback exists
+purely so a demo cannot die on a missing key mid-presentation — it is not the intended
+path, and the UI never claims Claude wrote something it did not. The same fallback catches
+an invalid key or a network failure at runtime, so a typo in the key degrades the
+explanations rather than breaking the app.
 
 ---
 
