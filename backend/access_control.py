@@ -133,8 +133,8 @@ def require_valid_grant(grant_id, patient_id, fields):
     status = grant.effective_status()
     if status == "revoked":
         raise ConsentError(
-            "access grant has been REVOKED by the patient. Historical consent does not "
-            "survive revocation."
+            "access grant has been REVOKED by the data owner. Historical consent does "
+            "not survive revocation."
         )
     if status == "expired":
         raise ConsentError("access grant has expired")

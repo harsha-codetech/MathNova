@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import api from '../api.js'
 import ApprovalModal from './ApprovalModal.jsx'
+import DelegatePanel from './DelegatePanel.jsx'
+import RevokeGrantModal from './RevokeGrantModal.jsx'
 import VaultPanel from './VaultPanel.jsx'
 import { Badge, Banner, Empty, Panel, formatWhen, statusTone } from './ui.jsx'
 
@@ -46,7 +48,7 @@ function RequestCard({ request, onApprove, onDeny, busy }) {
   )
 }
 
-function GrantCard({ grant }) {
+function GrantCard({ grant, onRevoke }) {
   return (
     <article className="card">
       <div className="spread">
@@ -61,29 +63,48 @@ function GrantCard({ grant }) {
       <div className="row wrap" style={{ marginTop: 10 }}>
         <span className="small faint">Scope:</span>
         {(grant.scope || []).map((f) => (
-          <span key={f} className="chip on">
+          <span key={f} className={grant.status === 'active' ? 'chip on' : 'chip'}>
             {f}
           </span>
         ))}
       </div>
 
-      <div className="small faint" style={{ marginTop: 10 }}>
-        Signed by {grant.granted_by} · expires {formatWhen(grant.expires_at)}
-      </div>
-      <div className="hash" style={{ marginTop: 6 }}>
-        sig {grant.signature?.slice(0, 32)}…
+      <div className="spread" style={{ marginTop: 10 }}>
+        <div>
+          <div className="small faint">
+            Signed by {grant.granted_by} · expires {formatWhen(grant.expires_at)}
+          </div>
+          <div className="hash" style={{ marginTop: 4 }}>
+            sig {grant.signature?.slice(0, 32)}…
+          </div>
+        </div>
+        {grant.status === 'active' && (
+          <button className="danger" onClick={() => onRevoke(grant)}>
+            Revoke
+          </button>
+        )}
       </div>
     </article>
   )
 }
 
-export default function PatientDashboard({ patient, vault, requests, grants, onRefresh }) {
+export default function PatientDashboard({
+  patient,
+  vault,
+  requests,
+  grants,
+  delegates,
+  onRefresh,
+}) {
   const [approving, setApproving] = useState(null)
+  const [revoking, setRevoking] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const pending = requests.filter((r) => r.status === 'pending')
   const settled = requests.filter((r) => r.status !== 'pending')
+  const activeGrants = grants.filter((g) => g.status === 'active')
+  const pastGrants = grants.filter((g) => g.status !== 'active')
 
   async function deny(request) {
     setBusy(true)
@@ -105,7 +126,7 @@ export default function PatientDashboard({ patient, vault, requests, grants, onR
 
         <Panel
           title="Pending access requests"
-          sub="Nothing is released until you sign"
+          sub="Nothing is released until someone with authority signs"
           actions={<Badge tone={pending.length ? 'warn' : 'neutral'}>{pending.length} waiting</Badge>}
         >
           {pending.length === 0 ? (
@@ -124,18 +145,26 @@ export default function PatientDashboard({ patient, vault, requests, grants, onR
         </Panel>
 
         <Panel
-          title="Access grants"
-          sub="Every grant is backed by a signature you produced"
-          actions={
-            <Badge tone="ok">{grants.filter((g) => g.status === 'active').length} active</Badge>
-          }
+          title="Active access grants"
+          sub="Revoke any of these at any time — it takes effect on the next read"
+          actions={<Badge tone={activeGrants.length ? 'ok' : 'neutral'}>{activeGrants.length} active</Badge>}
         >
-          {grants.length === 0 ? (
-            <Empty>No grants issued yet.</Empty>
+          {activeGrants.length === 0 ? (
+            <Empty>No one currently holds access to this vault.</Empty>
           ) : (
-            grants.map((g) => <GrantCard key={g.id} grant={g} />)
+            activeGrants.map((g) => <GrantCard key={g.id} grant={g} onRevoke={setRevoking} />)
           )}
         </Panel>
+
+        <DelegatePanel patient={patient} delegates={delegates} onRefresh={onRefresh} />
+
+        {pastGrants.length > 0 && (
+          <Panel title="Revoked & expired grants" sub="Kept for the record, useless for access">
+            {pastGrants.map((g) => (
+              <GrantCard key={g.id} grant={g} onRevoke={() => {}} />
+            ))}
+          </Panel>
+        )}
 
         {settled.length > 0 && (
           <Panel title="Settled requests" sub="Approved or denied">
@@ -152,11 +181,25 @@ export default function PatientDashboard({ patient, vault, requests, grants, onR
         <ApprovalModal
           request={approving}
           patient={patient}
+          delegates={delegates}
           onClose={() => {
             setApproving(null)
             onRefresh()
           }}
           onApproved={onRefresh}
+        />
+      )}
+
+      {revoking && (
+        <RevokeGrantModal
+          grant={revoking}
+          patient={patient}
+          delegates={delegates}
+          onClose={() => {
+            setRevoking(null)
+            onRefresh()
+          }}
+          onRevoked={onRefresh}
         />
       )}
     </div>

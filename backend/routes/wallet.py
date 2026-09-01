@@ -19,7 +19,15 @@ has -- and it is what the crypto-steps panel in the UI visualises.
 from flask import Blueprint, jsonify, request
 
 from access_control import ConsentError, normalise_fields
-from crypto_utils import canonical_json, grant_payload, sha256_hex, sign_message
+from crypto_utils import (
+    add_delegate_payload,
+    canonical_json,
+    grant_payload,
+    revoke_delegate_payload,
+    revoke_grant_payload,
+    sha256_hex,
+    sign_message,
+)
 from models import Delegate, Patient, db
 
 bp = Blueprint("wallet", __name__, url_prefix="/api/wallet")
@@ -64,6 +72,14 @@ def _build_payload(intent, params):
             params["request_id"],
             normalise_fields(params.get("granted_fields") or []),
             params["expires_at"],
+        )
+    if intent == "revoke_grant":
+        return revoke_grant_payload(params["grant_id"])
+    if intent == "revoke_delegate":
+        return revoke_delegate_payload(params["delegate_id"])
+    if intent == "add_delegate":
+        return add_delegate_payload(
+            params["patient_id"], params["delegate_name"], params["relationship"]
         )
     raise ConsentError(f"unknown signing intent '{intent}'", 400)
 

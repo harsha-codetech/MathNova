@@ -12,8 +12,15 @@ from access_control import (
     records_in_scope,
     require_valid_grant,
     resolve_signer,
+    signer_key_for_authority,
 )
-from crypto_utils import canonical_json, grant_payload, sha256_hex, verify_signature
+from crypto_utils import (
+    canonical_json,
+    grant_payload,
+    revoke_grant_payload,
+    sha256_hex,
+    verify_signature,
+)
 from models import AccessGrant, AccessRequest, Patient, db, iso, utcnow
 
 bp = Blueprint("access", __name__, url_prefix="/api")
@@ -377,5 +384,83 @@ def fetch_records():
             "fields": fields,
             "expires_at": iso(grant.expires_at),
             "records": records,
+        }
+    )
+
+
+# --------------------------------------------------------------------------
+# Mid-grant revocation
+# --------------------------------------------------------------------------
+@bp.post("/access-grants/<int:grant_id>/revoke")
+def revoke_grant(grant_id):
+    """Withdraw consent that was already given, before it expires.
+
+    Body: {signature, signer}. The signature is over {grant_id, action:"revoke"}.
+    Authority: the patient who owns the data, or any *currently active* delegate
+    of theirs. A revoked delegate cannot revoke anything.
+
+    Once this lands, `status` is authoritative -- every later read is refused by
+    require_valid_grant() even though the grant has not expired.
+    """
+    grant = db.session.get(AccessGrant, grant_id)
+    if grant is None:
+        return jsonify({"error": "access grant not found"}), 404
+    if grant.status == "revoked":
+        return jsonify({"error": "grant is already revoked"}), 409
+
+    body = request.get_json(silent=True) or {}
+    signature = body.get("signature")
+    if not signature:
+        return jsonify({"error": "signature is required -- revocation is a signed act"}), 400
+
+    try:
+        public_key, _granted_by, actor = signer_key_for_authority(
+            grant.patient_id, body.get("signer", "patient")
+        )
+    except ConsentError as err:
+        return jsonify({"error": err.message}), err.status
+
+    message = canonical_json(revoke_grant_payload(grant.id))
+    if not verify_signature(public_key, message, signature):
+        return jsonify(
+            {
+                "error": "signature verification failed -- grant NOT revoked",
+                "verified": False,
+                "canonical_message": message,
+                "message_sha256": sha256_hex(message),
+            }
+        ), 400
+
+    grant.status = "revoked"
+    source = db.session.get(AccessRequest, grant.access_request_id)
+
+    audit.log(
+        patient_id=grant.patient_id,
+        actor=actor,
+        action="grant_revoked",
+        details={
+            "access_grant_id": grant.id,
+            "access_request_id": grant.access_request_id,
+            "requester_name": source.requester_name if source else None,
+            "revoked_scope": grant.scope,
+            "signature": signature,
+            "signed_message": message,
+            "message_sha256": sha256_hex(message),
+            "verified_against_public_key": public_key,
+        },
+    )
+    db.session.commit()
+
+    return jsonify(
+        {
+            "access_grant": grant.to_dict(),
+            "verification": {
+                "canonical_message": message,
+                "message_sha256": sha256_hex(message),
+                "public_key": public_key,
+                "signature": signature,
+                "verified": True,
+                "signed_by": actor,
+            },
         }
     )

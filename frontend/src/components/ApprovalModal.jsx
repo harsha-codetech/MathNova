@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import api from '../api.js'
 import Modal from './Modal.jsx'
-import { Badge, Banner, Field } from './ui.jsx'
+import SignatureReceipt, { SignerPicker, signerParam } from './SignatureReceipt.jsx'
+import { Banner, Field } from './ui.jsx'
 
 const DURATIONS = [
   { label: '24 hours', hours: 24 },
@@ -9,10 +10,11 @@ const DURATIONS = [
   { label: '30 days', hours: 24 * 30 },
 ]
 
-export default function ApprovalModal({ request, patient, onClose, onApproved }) {
+export default function ApprovalModal({ request, patient, delegates, onClose, onApproved }) {
   const requested = request.requested_fields || []
   const [fields, setFields] = useState(requested)
   const [hours, setHours] = useState(24 * 7)
+  const [signer, setSigner] = useState('patient')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -34,7 +36,7 @@ export default function ApprovalModal({ request, patient, onClose, onApproved })
       // Step 1 -- the "wallet" builds the canonical consent message and signs it.
       const signed = await api.sign({
         patient_id: request.patient_id,
-        signer: 'patient',
+        signer: signerParam(signer),
         intent: 'approve_request',
         params: {
           request_id: request.id,
@@ -47,12 +49,12 @@ export default function ApprovalModal({ request, patient, onClose, onApproved })
       // the signature against the stored public key. It holds no private key.
       const approved = await api.approveRequest(request.id, {
         signature: signed.signature,
-        signer: 'patient',
+        signer: signerParam(signer),
         granted_fields: fields,
         expires_at: expiresAt,
       })
 
-      setResult({ ...signed, ...approved.verification, grant: approved.access_grant })
+      setResult({ ...approved.verification, grant: approved.access_grant })
       onApproved?.()
     } catch (e) {
       setError(e.message)
@@ -94,6 +96,13 @@ export default function ApprovalModal({ request, patient, onClose, onApproved })
 
       {!result && (
         <>
+          <SignerPicker
+            patient={patient}
+            delegates={delegates}
+            value={signer}
+            onChange={setSigner}
+          />
+
           <Field label="Grant only these fields (you may narrow the request)">
             <div className="chip-list">
               {requested.map((field) => (
@@ -126,19 +135,15 @@ export default function ApprovalModal({ request, patient, onClose, onApproved })
           <div>
             <div className="section-title">This is the exact message you will sign</div>
             <div className="codebox accent">
-              {JSON.stringify(
-                {
-                  request_id: request.id,
-                  granted_fields: [...fields].sort(),
-                  expires_at: expiresAt,
-                },
-                null,
-                0,
-              )}
+              {JSON.stringify({
+                expires_at: expiresAt,
+                granted_fields: [...fields].sort(),
+                request_id: request.id,
+              })}
             </div>
             <p className="small faint" style={{ marginTop: 6 }}>
-              Signed with {patient?.name}&apos;s Ed25519 private key. The server rebuilds this
-              string from its own data and verifies the signature — it never sees a private key.
+              The server rebuilds this string from its own data and verifies the signature
+              against the stored public key — it never sees a private key.
             </p>
           </div>
         </>
@@ -147,32 +152,13 @@ export default function ApprovalModal({ request, patient, onClose, onApproved })
       {error && <Banner tone="error">{error}</Banner>}
 
       {result && (
-        <div className="stack" style={{ gap: 12 }}>
+        <>
           <Banner tone="ok">
             Signature verified ✓ — access grant #{result.grant.id} created, scoped to{' '}
             {result.grant.scope.join(', ')}.
           </Banner>
-          <div>
-            <div className="section-title">Signed message</div>
-            <div className="codebox">{result.canonical_message}</div>
-          </div>
-          <div>
-            <div className="section-title">SHA-256 of message</div>
-            <div className="codebox">{result.message_sha256}</div>
-          </div>
-          <div>
-            <div className="section-title">Ed25519 signature</div>
-            <div className="codebox">{result.signature}</div>
-          </div>
-          <div>
-            <div className="section-title">Verified against public key</div>
-            <div className="codebox">{result.public_key}</div>
-          </div>
-          <div className="row">
-            <Badge tone="ok">verified</Badge>
-            <span className="small dim">signed by {result.signed_by}</span>
-          </div>
-        </div>
+          <SignatureReceipt receipt={result} />
+        </>
       )}
     </Modal>
   )

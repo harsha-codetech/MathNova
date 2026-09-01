@@ -11,7 +11,6 @@ and verifying it, and every step appends a real hash-chained audit entry. If
 the crypto were broken, seeding would fail.
 
 Later phases extend this file:
-  * phase 4 -- a full request -> grant -> revoke cycle and a revoked delegate
   * phase 5/6 -- the prescriptions that trip the safety and fraud analysers
 """
 
@@ -24,6 +23,8 @@ from crypto_utils import (
     canonical_json,
     generate_keypair,
     grant_payload,
+    revoke_delegate_payload,
+    revoke_grant_payload,
     sha256_hex,
     sign_message,
     verify_signature,
@@ -190,6 +191,87 @@ def record_access(grant, access_request, patient, fields=None, minutes_ago=0):
     )
 
 
+def revoke(grant, patient, delegate=None):
+    """Sign {grant_id, action:"revoke"}, verify, then flip the grant to revoked."""
+    if delegate is None:
+        private_key, public_key, actor = patient.private_key, patient.public_key, patient.name
+    else:
+        private_key = delegate.delegate_private_key
+        public_key = delegate.delegate_public_key
+        actor = f"{delegate.delegate_name} ({delegate.relationship}, delegate)"
+
+    message = canonical_json(revoke_grant_payload(grant.id))
+    signature = sign_message(private_key, message)
+    assert verify_signature(public_key, message, signature), "seed produced an invalid signature"
+
+    grant.status = "revoked"
+    source = db.session.get(AccessRequest, grant.access_request_id)
+    audit.log(
+        patient_id=patient.id,
+        actor=actor,
+        action="grant_revoked",
+        details={
+            "access_grant_id": grant.id,
+            "access_request_id": grant.access_request_id,
+            "requester_name": source.requester_name if source else None,
+            "revoked_scope": grant.scope,
+            "signature": signature,
+            "signed_message": message,
+            "message_sha256": sha256_hex(message),
+            "verified_against_public_key": public_key,
+        },
+    )
+    return grant
+
+
+def revoke_delegate(delegate, patient):
+    message = canonical_json(revoke_delegate_payload(delegate.id))
+    signature = sign_message(patient.private_key, message)
+    assert verify_signature(patient.public_key, message, signature)
+
+    delegate.status = "revoked"
+    audit.log(
+        patient_id=patient.id,
+        actor=patient.name,
+        action="delegate_revoked",
+        details={
+            "delegate_id": delegate.id,
+            "delegate_name": delegate.delegate_name,
+            "relationship": delegate.relationship,
+            "signature": signature,
+            "signed_message": message,
+            "message_sha256": sha256_hex(message),
+            "verified_against_public_key": patient.public_key,
+        },
+    )
+    return delegate
+
+
+def log_delegate_added(delegate, patient):
+    """Seeded delegates still get a signed, audited appointment entry."""
+    from crypto_utils import add_delegate_payload
+
+    message = canonical_json(
+        add_delegate_payload(patient.id, delegate.delegate_name, delegate.relationship)
+    )
+    signature = sign_message(patient.private_key, message)
+    assert verify_signature(patient.public_key, message, signature)
+    audit.log(
+        patient_id=patient.id,
+        actor=patient.name,
+        action="delegate_added",
+        details={
+            "delegate_id": delegate.id,
+            "delegate_name": delegate.delegate_name,
+            "relationship": delegate.relationship,
+            "delegate_public_key": delegate.delegate_public_key,
+            "signature": signature,
+            "signed_message": message,
+            "message_sha256": sha256_hex(message),
+        },
+    )
+
+
 # --------------------------------------------------------------------------
 # The demo world
 # --------------------------------------------------------------------------
@@ -221,7 +303,13 @@ def seed_people():
         "notes": "Improved from 7.9% six months ago.",
         "prescriber_name": "Dr. Rajesh Menon",
     })
-    make_delegate(ananya, "Sunita Iyer", "Mother")
+    sunita = make_delegate(ananya, "Sunita Iyer", "Mother")
+    log_delegate_added(sunita, ananya)
+    # A delegate who was authorised and later revoked -- proves that delegate
+    # authority is itself revocable, not a permanent back door.
+    vikram = make_delegate(ananya, "Vikram Iyer", "Brother")
+    log_delegate_added(vikram, ananya)
+    revoke_delegate(vikram, ananya)
 
     # ------------------------------------------------------------------
     # Patient 2 -- on warfarin; set up for the phase 5 safety flag
@@ -250,7 +338,8 @@ def seed_people():
         "notes": "Within therapeutic range.",
         "prescriber_name": "Dr. Priya Nair",
     })
-    make_delegate(rohit, "Kavita Deshmukh", "Spouse")
+    kavita = make_delegate(rohit, "Kavita Deshmukh", "Spouse")
+    log_delegate_added(kavita, rohit)
 
     # ------------------------------------------------------------------
     # Patient 3 -- set up for the phase 5 fraud flag (prescriber shopping on a
@@ -269,13 +358,21 @@ def seed_people():
         "Sertraline", "50 mg", "once daily", "Dr. Arjun Pillai", "MCI-TN-30877",
         days_ago=90, notes="Generalised anxiety disorder.", quantity=30, supply_days=30))
 
-    return {"ananya": ananya, "rohit": rohit, "meera": meera}
+    return {
+        "ananya": ananya,
+        "rohit": rohit,
+        "meera": meera,
+        "sunita": sunita,
+        "kavita": kavita,
+        "vikram": vikram,
+    }
 
 
 def seed_consent(people):
     """Pending requests plus one already-approved-and-used grant, so both the
     approval queue and the disclosure dashboard have content on first load."""
     ananya, rohit, meera = people["ananya"], people["rohit"], people["meera"]
+    kavita = people["kavita"]
 
     # An approved, actively-used grant on Ananya's vault.
     apollo = make_request(
@@ -289,6 +386,33 @@ def seed_consent(people):
     apollo_grant = approve(apollo, ananya, valid_days=14)
     record_access(apollo_grant, apollo, ananya, minutes_ago=2870)
     record_access(apollo_grant, apollo, ananya, ["prescriptions"], minutes_ago=1400)
+
+    # A full request -> grant -> read -> REVOKE cycle, so the disclosure
+    # dashboard shows a completed lifecycle without anyone touching the UI.
+    healthfirst = make_request(
+        ananya,
+        "HealthFirst Clinic, Koramangala",
+        "hospital",
+        ["prescriptions", "diagnostics"],
+        "Second opinion on diabetes management, requested during a walk-in consult.",
+        minutes_ago=600,
+    )
+    healthfirst_grant = approve(healthfirst, ananya, valid_days=30)
+    record_access(healthfirst_grant, healthfirst, ananya, minutes_ago=590)
+    revoke(healthfirst_grant, ananya)
+
+    # Delegated proxy consent: Rohit was sedated after a procedure, so his
+    # spouse Kavita signed with her own key. The audit entry says so.
+    wockhardt = make_request(
+        rohit,
+        "Wockhardt Hospital, Nagpur",
+        "hospital",
+        ["prescriptions", "allergies"],
+        "Emergency admission -- patient sedated, need anticoagulant and allergy status now.",
+        minutes_ago=420,
+    )
+    wockhardt_grant = approve(wockhardt, rohit, delegate=kavita, valid_days=3)
+    record_access(wockhardt_grant, wockhardt, rohit, minutes_ago=415)
 
     # Pending requests -- the patient approval queue.
     make_request(
@@ -316,7 +440,12 @@ def seed_consent(people):
         minutes_ago=20,
     )
 
-    return {"apollo_request": apollo, "apollo_grant": apollo_grant}
+    return {
+        "apollo_request": apollo,
+        "apollo_grant": apollo_grant,
+        "healthfirst_grant": healthfirst_grant,
+        "wockhardt_grant": wockhardt_grant,
+    }
 
 
 def run():
@@ -341,7 +470,9 @@ def run():
             )
         print(
             f"  requests={AccessRequest.query.count()} "
-            f"grants={AccessGrant.query.count()}"
+            f"grants={AccessGrant.query.count()} "
+            f"(revoked={AccessGrant.query.filter_by(status='revoked').count()}) "
+            f"delegates={Delegate.query.count()}"
         )
 
 

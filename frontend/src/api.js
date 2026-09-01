@@ -52,7 +52,12 @@ export const api = {
   denyRequest: (id, payload) => post(`/access-requests/${id}/deny`, payload),
 
   listGrants: (patientId) => get(`/access-grants?${qs({ patient_id: patientId })}`),
+  revokeGrant: (id, payload) => post(`/access-grants/${id}/revoke`, payload),
   fetchRecords: (params) => get(`/records?${qs(params)}`),
+
+  listDelegates: (patientId) => get(`/patients/${patientId}/delegates`),
+  addDelegate: (patientId, payload) => post(`/patients/${patientId}/delegates`, payload),
+  revokeDelegate: (id, payload) => post(`/delegates/${id}/revoke`, payload),
 
   auditLog: (patientId) => get(`/patients/${patientId}/audit-log`),
 
