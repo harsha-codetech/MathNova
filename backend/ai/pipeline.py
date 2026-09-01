@@ -9,12 +9,13 @@ import audit
 from ai import fraud, safety
 
 
-def _log_flags(patient_id, rows, action, actor):
+def _log_flags(patient_id, rows, action, actor, timestamp=None):
     for row in rows:
         audit.log(
             patient_id=patient_id,
             actor=actor,
             action=action,
+            timestamp=timestamp,
             details={
                 "flag_id": row.id,
                 "flag_type": row.flag_type,
@@ -27,18 +28,20 @@ def _log_flags(patient_id, rows, action, actor):
         )
 
 
-def analyse_new_record(record):
-    """Safety check + fraud check for a newly created record. Caller commits."""
+def analyse_new_record(record, timestamp=None):
+    """Safety check + fraud check for a newly created record. Caller commits.
+
+    `timestamp` exists only for the seed script, which backdates history."""
     safety_rows, safety_meta = safety.check_prescription(record)
     fraud_rows, fraud_meta = fraud.check_prescription(record)
 
     _log_flags(
         record.patient_id, safety_rows, "safety_flag",
-        f"MathNova safety analyser ({safety_meta.get('source')})",
+        f"MathNova safety analyser ({safety_meta.get('source')})", timestamp,
     )
     _log_flags(
         record.patient_id, fraud_rows, "fraud_flag",
-        f"MathNova fraud analyser ({fraud_meta.get('source')})",
+        f"MathNova fraud analyser ({fraud_meta.get('source')})", timestamp,
     )
 
     return {

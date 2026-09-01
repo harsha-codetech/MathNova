@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import api from './api.js'
 import AuditLogPanel from './components/AuditLogPanel.jsx'
+import DisclosureDashboard from './components/DisclosureDashboard.jsx'
 import PatientDashboard from './components/PatientDashboard.jsx'
 import RequesterPortal from './components/RequesterPortal.jsx'
 import { Banner } from './components/ui.jsx'
@@ -18,6 +19,7 @@ const REQUESTERS = [
 
 const PATIENT_TABS = [
   { id: 'consent', label: 'Consent & Vault' },
+  { id: 'disclosure', label: 'Disclosure Dashboard' },
   { id: 'audit', label: 'Audit Log' },
 ]
 
@@ -36,6 +38,7 @@ export default function App() {
   const [auditLog, setAuditLog] = useState(null)
   const [delegates, setDelegates] = useState([])
   const [flags, setFlags] = useState(null)
+  const [disclosure, setDisclosure] = useState(null)
   const [requesterRequests, setRequesterRequests] = useState([])
 
   const [error, setError] = useState('')
@@ -72,13 +75,14 @@ export default function App() {
   const refreshPatient = useCallback(async () => {
     if (!patientId) return
     try {
-      const [v, rs, gs, ds, log, fl] = await Promise.all([
+      const [v, rs, gs, ds, log, fl, dd] = await Promise.all([
         api.vault(patientId),
         api.listRequests({ patient_id: patientId }),
         api.listGrants(patientId),
         api.listDelegates(patientId),
         api.auditLog(patientId),
         api.flags(patientId),
+        api.disclosureDashboard(patientId),
       ])
       setVault(v)
       setRequests(rs)
@@ -86,6 +90,7 @@ export default function App() {
       setDelegates(ds)
       setAuditLog(log)
       setFlags(fl)
+      setDisclosure(dd)
       setError('')
     } catch (e) {
       setError(e.message)
@@ -173,6 +178,19 @@ export default function App() {
             <span className={`status-dot ${health ? 'up' : 'down'}`} />
             {health ? 'API up' : 'API down'}
           </span>
+
+          {health?.ai && (
+            <span
+              className="chip"
+              title={
+                health.ai.mode === 'claude'
+                  ? `Safety and fraud explanations come from ${health.ai.model}`
+                  : 'No ANTHROPIC_API_KEY set — the analysers are running offline heuristics'
+              }
+            >
+              AI: {health.ai.mode === 'claude' ? health.ai.model : 'offline fallback'}
+            </span>
+          )}
         </div>
       </header>
 
@@ -202,6 +220,8 @@ export default function App() {
               flags={flags}
               onRefresh={refreshAll}
             />
+          ) : tab === 'disclosure' ? (
+            <DisclosureDashboard data={disclosure} patient={patient} />
           ) : (
             <AuditLogPanel log={auditLog} />
           )

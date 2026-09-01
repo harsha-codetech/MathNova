@@ -61,6 +61,7 @@ export const api = {
 
   auditLog: (patientId) => get(`/patients/${patientId}/audit-log`),
   flags: (patientId) => get(`/patients/${patientId}/flags`),
+  disclosureDashboard: (patientId) => get(`/patients/${patientId}/disclosure-dashboard`),
 
   // Demo stand-in for a client-side wallet. See backend/routes/wallet.py.
   sign: (payload) => post('/wallet/sign', payload),

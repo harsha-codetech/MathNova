@@ -1,6 +1,6 @@
 """Patient-facing endpoints: identity list, vault, record creation."""
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from ai.pipeline import analyse_new_record
 from models import FraudFlag, MedicalRecord, Patient, SafetyFlag, db
@@ -10,12 +10,20 @@ bp = Blueprint("patients", __name__, url_prefix="/api")
 
 @bp.get("/health")
 def health():
+    # `ai` is reported honestly: without an ANTHROPIC_API_KEY the analysers run
+    # their offline heuristics, and the UI says so rather than implying Claude
+    # wrote an explanation it did not write.
+    live = bool(current_app.config.get("ANTHROPIC_API_KEY"))
     return jsonify(
         {
             "status": "ok",
             "service": "MathNova - Patient-Sovereign Prescription Intelligence Network",
             "patients": Patient.query.count(),
             "records": MedicalRecord.query.count(),
+            "ai": {
+                "mode": "claude" if live else "offline-fallback",
+                "model": current_app.config.get("CLAUDE_MODEL"),
+            },
         }
     )
 

@@ -211,8 +211,8 @@ thead th {
   text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-faint); font-weight: 700;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-sunken);
-  position: sticky; top: 0;
 }
+.scroll-y thead th { position: sticky; top: 0; z-index: 1; }
 tbody td { padding: 11px 14px; border-bottom: 1px solid rgba(38,50,74,0.6); vertical-align: top; }
 tbody tr:hover { background: rgba(255,255,255,0.02); }
 

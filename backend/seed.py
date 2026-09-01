@@ -123,10 +123,12 @@ def make_request(patient, requester_name, requester_type, fields, purpose, minut
     return access_request
 
 
-def approve(access_request, patient, delegate=None, granted_fields=None, valid_days=7):
+def approve(access_request, patient, delegate=None, granted_fields=None, valid_days=7,
+            minutes_ago=0):
     """Sign, verify, then grant -- the same sequence the API performs."""
     fields = normalise_fields(granted_fields or access_request.requested_fields)
-    expires_at = utcnow() + timedelta(days=valid_days)
+    signed_at = utcnow() - timedelta(minutes=minutes_ago)
+    expires_at = signed_at + timedelta(days=valid_days)
     expires_at_iso = iso(expires_at)
 
     if delegate is None:
@@ -150,6 +152,7 @@ def approve(access_request, patient, delegate=None, granted_fields=None, valid_d
         scope=fields,
         expires_at=expires_at,
         status="active",
+        created_at=signed_at,
     )
     access_request.status = "approved"
     db.session.add(grant)
@@ -169,6 +172,7 @@ def approve(access_request, patient, delegate=None, granted_fields=None, valid_d
             "message_sha256": sha256_hex(message),
             "verified_against_public_key": public_key,
         },
+        timestamp=signed_at,
     )
     return grant
 
@@ -195,7 +199,7 @@ def record_access(grant, access_request, patient, fields=None, minutes_ago=0):
     )
 
 
-def revoke(grant, patient, delegate=None):
+def revoke(grant, patient, delegate=None, minutes_ago=0):
     """Sign {grant_id, action:"revoke"}, verify, then flip the grant to revoked."""
     if delegate is None:
         private_key, public_key, actor = patient.private_key, patient.public_key, patient.name
@@ -224,11 +228,12 @@ def revoke(grant, patient, delegate=None):
             "message_sha256": sha256_hex(message),
             "verified_against_public_key": public_key,
         },
+        timestamp=utcnow() - timedelta(minutes=minutes_ago),
     )
     return grant
 
 
-def revoke_delegate(delegate, patient):
+def revoke_delegate(delegate, patient, minutes_ago=0):
     message = canonical_json(revoke_delegate_payload(delegate.id))
     signature = sign_message(patient.private_key, message)
     assert verify_signature(patient.public_key, message, signature)
@@ -247,11 +252,12 @@ def revoke_delegate(delegate, patient):
             "message_sha256": sha256_hex(message),
             "verified_against_public_key": patient.public_key,
         },
+        timestamp=utcnow() - timedelta(minutes=minutes_ago),
     )
     return delegate
 
 
-def log_delegate_added(delegate, patient):
+def log_delegate_added(delegate, patient, minutes_ago=0):
     """Seeded delegates still get a signed, audited appointment entry."""
     from crypto_utils import add_delegate_payload
 
@@ -273,6 +279,7 @@ def log_delegate_added(delegate, patient):
             "signed_message": message,
             "message_sha256": sha256_hex(message),
         },
+        timestamp=utcnow() - timedelta(minutes=minutes_ago),
     )
 
 
@@ -308,12 +315,12 @@ def seed_people():
         "prescriber_name": "Dr. Rajesh Menon",
     })
     sunita = make_delegate(ananya, "Sunita Iyer", "Mother")
-    log_delegate_added(sunita, ananya)
+    log_delegate_added(sunita, ananya, minutes_ago=60 * 24 * 40)
     # A delegate who was authorised and later revoked -- proves that delegate
     # authority is itself revocable, not a permanent back door.
     vikram = make_delegate(ananya, "Vikram Iyer", "Brother")
-    log_delegate_added(vikram, ananya)
-    revoke_delegate(vikram, ananya)
+    log_delegate_added(vikram, ananya, minutes_ago=60 * 24 * 35)
+    revoke_delegate(vikram, ananya, minutes_ago=60 * 24 * 10)
 
     # ------------------------------------------------------------------
     # Patient 2 -- on warfarin; set up for the phase 5 safety flag
@@ -343,7 +350,7 @@ def seed_people():
         "prescriber_name": "Dr. Priya Nair",
     })
     kavita = make_delegate(rohit, "Kavita Deshmukh", "Spouse")
-    log_delegate_added(kavita, rohit)
+    log_delegate_added(kavita, rohit, minutes_ago=60 * 24 * 30)
 
     # ------------------------------------------------------------------
     # Patient 3 -- set up for the phase 5 fraud flag (prescriber shopping on a
@@ -387,7 +394,7 @@ def seed_consent(people):
         "Dispense the monthly Metformin refill and screen it against documented allergies.",
         minutes_ago=2880,
     )
-    apollo_grant = approve(apollo, ananya, valid_days=14)
+    apollo_grant = approve(apollo, ananya, valid_days=21, minutes_ago=2875)
     record_access(apollo_grant, apollo, ananya, minutes_ago=2870)
     record_access(apollo_grant, apollo, ananya, ["prescriptions"], minutes_ago=1400)
 
@@ -401,9 +408,9 @@ def seed_consent(people):
         "Second opinion on diabetes management, requested during a walk-in consult.",
         minutes_ago=600,
     )
-    healthfirst_grant = approve(healthfirst, ananya, valid_days=30)
+    healthfirst_grant = approve(healthfirst, ananya, valid_days=30, minutes_ago=595)
     record_access(healthfirst_grant, healthfirst, ananya, minutes_ago=590)
-    revoke(healthfirst_grant, ananya)
+    revoke(healthfirst_grant, ananya, minutes_ago=120)
 
     # Delegated proxy consent: Rohit was sedated after a procedure, so his
     # spouse Kavita signed with her own key. The audit entry says so.
@@ -415,7 +422,9 @@ def seed_consent(people):
         "Emergency admission -- patient sedated, need anticoagulant and allergy status now.",
         minutes_ago=420,
     )
-    wockhardt_grant = approve(wockhardt, rohit, delegate=kavita, valid_days=3)
+    wockhardt_grant = approve(
+        wockhardt, rohit, delegate=kavita, valid_days=3, minutes_ago=418
+    )
     record_access(wockhardt_grant, wockhardt, rohit, minutes_ago=415)
 
     # Pending requests -- the patient approval queue.
@@ -468,7 +477,7 @@ def seed_clinical_scenarios(people):
         "Naproxen", "500 mg", "twice daily", "Dr. Sameer Joshi", "MCI-MH-55214",
         days_ago=1, notes="Acute lower back pain after a fall.",
         quantity=20, supply_days=10))
-    analyse_new_record(naproxen)
+    analyse_new_record(naproxen, timestamp=utcnow() - timedelta(days=1))
 
     # ---- FRAUD: prescriber shopping on a controlled analgesic -------------
     # Three different doctors write the same opioid inside 30 days, each refill
@@ -484,7 +493,7 @@ def seed_clinical_scenarios(people):
             "Tramadol", "50 mg", "as needed for pain", prescriber_name, prescriber_id,
             days_ago=days_ago, notes="Chronic lower back pain.",
             quantity=quantity, supply_days=supply_days))
-        analyse_new_record(record)
+        analyse_new_record(record, timestamp=utcnow() - timedelta(days=days_ago))
 
 
 def run():
@@ -492,6 +501,8 @@ def run():
     with app.app_context():
         db.drop_all()
         db.create_all()
+        # Order matters: each patient's audit chain should read chronologically
+        # as well as being hash-ordered, so history is seeded oldest first.
         people = seed_people()
         db.session.flush()
         seed_clinical_scenarios(people)
