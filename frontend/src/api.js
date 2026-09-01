@@ -32,11 +32,32 @@ const get = (path) => request(path)
 const post = (path, payload) =>
   request(path, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 
+const qs = (params) =>
+  Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&')
+
 export const api = {
   health: () => get('/health'),
   listPatients: () => get('/patients'),
   vault: (patientId) => get(`/patients/${patientId}/vault`),
   addRecord: (patientId, payload) => post(`/patients/${patientId}/records`, payload),
+
+  accessFields: () => get('/access-fields'),
+
+  listRequests: (params) => get(`/access-requests?${qs(params)}`),
+  createRequest: (payload) => post('/access-requests', payload),
+  approveRequest: (id, payload) => post(`/access-requests/${id}/approve`, payload),
+  denyRequest: (id, payload) => post(`/access-requests/${id}/deny`, payload),
+
+  listGrants: (patientId) => get(`/access-grants?${qs({ patient_id: patientId })}`),
+  fetchRecords: (params) => get(`/records?${qs(params)}`),
+
+  auditLog: (patientId) => get(`/patients/${patientId}/audit-log`),
+
+  // Demo stand-in for a client-side wallet. See backend/routes/wallet.py.
+  sign: (payload) => post('/wallet/sign', payload),
 }
 
 export default api

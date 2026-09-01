@@ -244,3 +244,84 @@ tbody tr:hover { background: rgba(255,255,255,0.02); }
 .stat { display: flex; flex-direction: column; gap: 2px; }
 .stat .n { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
 .stat .l { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); font-weight: 600; }
+
+/* ---------------------------------------------------------------- modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(4, 6, 12, 0.72);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 48px 24px; overflow-y: auto;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 12px; width: 100%; max-width: 720px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.6);
+}
+.modal.wide { max-width: 900px; }
+.modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+}
+.modal-head h2 { font-size: 17px; }
+.modal-body { padding: 22px; display: flex; flex-direction: column; gap: 18px; }
+.modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  padding: 16px 22px; border-top: 1px solid var(--border); background: var(--bg-sunken);
+}
+.close-x {
+  border: none; background: transparent; color: var(--text-faint);
+  font-size: 20px; line-height: 1; padding: 4px 8px;
+}
+
+/* ------------------------------------------------------- crypto steps */
+.crypto-steps { display: flex; flex-direction: column; gap: 0; }
+.cstep { display: grid; grid-template-columns: 26px 1fr; gap: 12px; }
+.cstep .rail { display: flex; flex-direction: column; align-items: center; }
+.cstep .dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border-strong); background: var(--bg-sunken);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: var(--text-faint); flex: none;
+}
+.cstep .line { width: 2px; flex: 1; background: var(--border); min-height: 14px; }
+.cstep .body { padding-bottom: 14px; }
+.cstep .title { font-size: 13.5px; font-weight: 650; color: var(--text-dim); }
+.cstep .detail { margin-top: 6px; }
+
+.cstep.running .dot { border-color: var(--blue); color: var(--blue); }
+.cstep.running .title { color: var(--text); }
+.cstep.done .dot { border-color: var(--ok); background: rgba(52,211,153,0.15); color: var(--ok); }
+.cstep.done .title { color: var(--text); }
+.cstep.done .line { background: linear-gradient(180deg, var(--ok), var(--border)); }
+.cstep.failed .dot { border-color: var(--danger); background: rgba(248,113,113,0.15); color: var(--danger); }
+.cstep.failed .title { color: #fca5a5; }
+
+.codebox {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+  color: #b8c4d9; word-break: break-all; white-space: pre-wrap;
+}
+.codebox.accent { border-color: rgba(94,234,212,0.3); color: #9decd8; }
+
+/* ---------------------------------------------------------------- flags */
+.flag {
+  border-radius: var(--radius-sm); padding: 12px 14px; margin-top: 10px;
+  border-left: 4px solid var(--border-strong); background: var(--bg-sunken);
+  border-top: 1px solid var(--border); border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.flag.high   { border-left-color: #fb7185; background: rgba(251,113,133,0.08); }
+.flag.medium { border-left-color: #fbbf24; background: rgba(251,191,36,0.07); }
+.flag.low    { border-left-color: #60a5fa; background: rgba(96,165,250,0.07); }
+.flag .flag-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flag .flag-text { margin-top: 7px; font-size: 13px; color: var(--text); line-height: 1.55; }
+
+/* ---------------------------------------------------------------- misc */
+.scroll-y { max-height: 520px; overflow-y: auto; }
+.divider { height: 1px; background: var(--border); margin: 4px 0; }
+.linkish {
+  background: none; border: none; padding: 0; color: var(--accent);
+  font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px;
+}
+.linkish:hover { background: none; color: #99f6e4; }
