@@ -3,18 +3,41 @@
 Run:  python seed.py      (from the backend/ directory)
 
 Drops every table and rebuilds a deterministic demo world so the app has
-something to show on first load without any manual clicking. Later phases
-extend this file:
-  * phase 2 -- signed grants + a hash-chained audit trail
+something to show on first load without any manual clicking.
+
+The consent history is not faked: every seeded grant is produced by actually
+signing the canonical payload with the patient's (or delegate's) Ed25519 key
+and verifying it, and every step appends a real hash-chained audit entry. If
+the crypto were broken, seeding would fail.
+
+Later phases extend this file:
   * phase 4 -- a full request -> grant -> revoke cycle and a revoked delegate
   * phase 5/6 -- the prescriptions that trip the safety and fraud analysers
 """
 
 from datetime import timedelta
 
+import audit
+from access_control import normalise_fields
 from app import create_app
-from crypto_utils import generate_keypair
-from models import Delegate, MedicalRecord, Patient, db, utcnow
+from crypto_utils import (
+    canonical_json,
+    generate_keypair,
+    grant_payload,
+    sha256_hex,
+    sign_message,
+    verify_signature,
+)
+from models import (
+    AccessGrant,
+    AccessRequest,
+    Delegate,
+    MedicalRecord,
+    Patient,
+    db,
+    iso,
+    utcnow,
+)
 
 
 def _iso_date(days_ago):
@@ -66,6 +89,110 @@ def prescription(drug_name, dosage, frequency, prescriber_name, prescriber_id,
     }
 
 
+# --------------------------------------------------------------------------
+# Consent helpers -- these walk the *real* crypto path, no shortcuts
+# --------------------------------------------------------------------------
+def make_request(patient, requester_name, requester_type, fields, purpose, minutes_ago=0):
+    access_request = AccessRequest(
+        requester_name=requester_name,
+        requester_type=requester_type,
+        patient_id=patient.id,
+        requested_fields=normalise_fields(fields),
+        purpose=purpose,
+        status="pending",
+        created_at=utcnow() - timedelta(minutes=minutes_ago),
+    )
+    db.session.add(access_request)
+    db.session.flush()
+    audit.log(
+        patient_id=patient.id,
+        actor=f"{requester_name} ({requester_type})",
+        action="request_created",
+        details={
+            "access_request_id": access_request.id,
+            "requested_fields": access_request.requested_fields,
+            "purpose": purpose,
+        },
+        timestamp=access_request.created_at,
+    )
+    return access_request
+
+
+def approve(access_request, patient, delegate=None, granted_fields=None, valid_days=7):
+    """Sign, verify, then grant -- the same sequence the API performs."""
+    fields = normalise_fields(granted_fields or access_request.requested_fields)
+    expires_at = utcnow() + timedelta(days=valid_days)
+    expires_at_iso = iso(expires_at)
+
+    if delegate is None:
+        private_key, public_key = patient.private_key, patient.public_key
+        granted_by, actor, action = "patient", patient.name, "approved_by_patient"
+    else:
+        private_key, public_key = delegate.delegate_private_key, delegate.delegate_public_key
+        granted_by = f"delegate:{delegate.id}"
+        actor = f"{delegate.delegate_name} ({delegate.relationship}, delegate)"
+        action = "approved_by_delegate"
+
+    message = canonical_json(grant_payload(access_request.id, fields, expires_at_iso))
+    signature = sign_message(private_key, message)
+    assert verify_signature(public_key, message, signature), "seed produced an invalid signature"
+
+    grant = AccessGrant(
+        access_request_id=access_request.id,
+        patient_id=patient.id,
+        granted_by=granted_by,
+        signature=signature,
+        scope=fields,
+        expires_at=expires_at,
+        status="active",
+    )
+    access_request.status = "approved"
+    db.session.add(grant)
+    db.session.flush()
+
+    audit.log(
+        patient_id=patient.id,
+        actor=actor,
+        action=action,
+        details={
+            "access_request_id": access_request.id,
+            "access_grant_id": grant.id,
+            "granted_fields": fields,
+            "expires_at": expires_at_iso,
+            "signature": signature,
+            "signed_message": message,
+            "message_sha256": sha256_hex(message),
+            "verified_against_public_key": public_key,
+        },
+    )
+    return grant
+
+
+def record_access(grant, access_request, patient, fields=None, minutes_ago=0):
+    """Log a read that already happened, so the disclosure dashboard is populated
+    on first load."""
+    used = fields or grant.scope
+    audit.log(
+        patient_id=patient.id,
+        actor=f"{access_request.requester_name} ({access_request.requester_type})",
+        action="data_accessed",
+        details={
+            "access_grant_id": grant.id,
+            "access_request_id": access_request.id,
+            "outcome": "ALLOWED",
+            "fields": list(used),
+            "record_count": MedicalRecord.query.filter(
+                MedicalRecord.patient_id == patient.id
+            ).count(),
+            "purpose": access_request.purpose,
+        },
+        timestamp=utcnow() - timedelta(minutes=minutes_ago),
+    )
+
+
+# --------------------------------------------------------------------------
+# The demo world
+# --------------------------------------------------------------------------
 def seed_people():
     """Three patients, their baseline medication lists, allergies and delegates."""
 
@@ -145,23 +272,77 @@ def seed_people():
     return {"ananya": ananya, "rohit": rohit, "meera": meera}
 
 
+def seed_consent(people):
+    """Pending requests plus one already-approved-and-used grant, so both the
+    approval queue and the disclosure dashboard have content on first load."""
+    ananya, rohit, meera = people["ananya"], people["rohit"], people["meera"]
+
+    # An approved, actively-used grant on Ananya's vault.
+    apollo = make_request(
+        ananya,
+        "Apollo Pharmacy, Indiranagar",
+        "pharmacy",
+        ["prescriptions", "allergies"],
+        "Dispense the monthly Metformin refill and screen it against documented allergies.",
+        minutes_ago=2880,
+    )
+    apollo_grant = approve(apollo, ananya, valid_days=14)
+    record_access(apollo_grant, apollo, ananya, minutes_ago=2870)
+    record_access(apollo_grant, apollo, ananya, ["prescriptions"], minutes_ago=1400)
+
+    # Pending requests -- the patient approval queue.
+    make_request(
+        rohit,
+        "Fortis Hospital, Mulund",
+        "hospital",
+        ["prescriptions", "allergies", "reports"],
+        "Pre-operative anaesthetic assessment ahead of a dental extraction on Friday.",
+        minutes_ago=90,
+    )
+    make_request(
+        ananya,
+        "MaxLife Insurance",
+        "insurer",
+        ["diagnostics", "reports"],
+        "Adjudicate claim ML-88213 for the September outpatient visit.",
+        minutes_ago=45,
+    )
+    make_request(
+        meera,
+        "SRL Diagnostics, T. Nagar",
+        "lab",
+        ["prescriptions"],
+        "Confirm current medication list before a scheduled pulmonary function test.",
+        minutes_ago=20,
+    )
+
+    return {"apollo_request": apollo, "apollo_grant": apollo_grant}
+
+
 def run():
     app = create_app()
     with app.app_context():
         db.drop_all()
         db.create_all()
         people = seed_people()
+        db.session.flush()
+        seed_consent(people)
         db.session.commit()
 
         print("Seeded MathNova demo data")
-        for key, patient in people.items():
+        for patient in Patient.query.order_by(Patient.id):
             record_count = MedicalRecord.query.filter_by(patient_id=patient.id).count()
             delegate_count = Delegate.query.filter_by(patient_id=patient.id).count()
+            chain = audit.verify_chain(patient.id)
             print(
-                f"  [{patient.id}] {patient.name:<20} "
+                f"  [{patient.id}] {patient.name:<18} "
                 f"records={record_count} delegates={delegate_count} "
-                f"pubkey={patient.public_key[:16]}..."
+                f"audit={chain['length']} chain={'INTACT' if chain['valid'] else 'BROKEN'}"
             )
+        print(
+            f"  requests={AccessRequest.query.count()} "
+            f"grants={AccessGrant.query.count()}"
+        )
 
 
 if __name__ == "__main__":
