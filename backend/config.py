@@ -10,6 +10,17 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Load backend/.env before anything reads os.environ, so the API key can be set
+# once in a file instead of re-exported in every new terminal -- the most common
+# way a demo ends up silently running in fallback mode. A real environment
+# variable always wins over the file.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(BASE_DIR / ".env", override=False)
+except ImportError:  # python-dotenv is in requirements.txt; degrade if absent
+    pass
+
 # SQLite lives next to the backend package so `python seed.py` and
 # `python app.py` always agree on where the database is.
 DB_PATH = BASE_DIR / "mathnova.db"

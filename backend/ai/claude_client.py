@@ -19,19 +19,29 @@ _client_key = None
 
 
 def _get_client(api_key):
-    """Lazily construct (and cache) the Anthropic SDK client."""
+    """Lazily construct (and cache) the Anthropic SDK client.
+
+    Raises nothing: constructing the client can fail on its own (a bad SDK/httpx
+    version pairing, for instance), and that must degrade to the offline
+    analyser rather than 500 a request that was really about recording a
+    prescription.
+    """
     global _client, _client_key
     if not api_key:
-        return None
+        return None, "no ANTHROPIC_API_KEY configured"
     if _client is not None and _client_key == api_key:
-        return _client
+        return _client, None
     try:
         import anthropic
     except ImportError:  # pragma: no cover - dependency is in requirements.txt
-        return None
-    _client = anthropic.Anthropic(api_key=api_key)
+        return None, "anthropic SDK not installed"
+    try:
+        _client = anthropic.Anthropic(api_key=api_key)
+    except Exception as exc:  # noqa: BLE001 - SDK/env problems must not escape
+        _client, _client_key = None, None
+        return None, f"could not construct the Anthropic client: {exc}"
     _client_key = api_key
-    return _client
+    return _client, None
 
 
 def is_live():
@@ -70,9 +80,9 @@ def ask_claude(system_prompt, user_prompt):
     consent decision being honoured.
     """
     api_key = current_app.config.get("ANTHROPIC_API_KEY")
-    client = _get_client(api_key)
+    client, client_error = _get_client(api_key)
     if client is None:
-        return None, "no ANTHROPIC_API_KEY configured"
+        return None, client_error
 
     try:
         message = client.messages.create(
